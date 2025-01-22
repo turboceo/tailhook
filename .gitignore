@@ -174,11 +174,5 @@ dist
 # Finder (MacOS) folder config
 .DS_Store
 
-tailhook
-tailhook-darwin-arm64
-tailhook-darwin-x64
-tailhook-linux-arm64
-tailhook-linux-x64
-
 *.exe
 *.zip
