@@ -1,89 +1,58 @@
 import path from "path";
-import { Tail } from "tail";
 import fs from "fs";
 import { Signale } from "signale";
+
+import express from "express";
+import { createProxyMiddleware } from "http-proxy-middleware";
+import history from "connect-history-api-fallback";
+import cors from "cors";
 
 const logger = new Signale({
   scope: "app",
 });
-const lastNotifyTime = new Map();
+
+const cwd = process.cwd();
 
 // import.meta.dir
 // $bunfs
-const configPath = path.resolve(process.env.CONFIG || "./config.js");
+const configPath = process.env.CONFIG ? process.env.CONFIG : path.join(cwd, "./config.json");
 logger.log(`配置文件: ${configPath}`);
 
 if (!fs.existsSync(configPath)) {
   logger.error(`配置文件不存在: ${configPath}`);
   logger.log("可以通过设置环境变量 CONFIG 来指定配置文件路径");
-  logger.log("例如: CONFIG=./config.js");
+  logger.log("例如: CONFIG=./config.json");
   process.exit(1);
 }
 
-async function loadConfig() {
-  try {
-    const { configs, notify, DEBOUNCE_INTERVAL } = await import(configPath);
-    return { configs, notify, DEBOUNCE_INTERVAL };
-  } catch (error) {
-    logger.error(`加载配置文件失败 (${configPath}):`, error);
-    process.exit(1);
-  }
-}
+let config = await import(configPath);
 
-async function handleLine(filePath, line) {
-  const { configs, notify, DEBOUNCE_INTERVAL } = await loadConfig();
-  const fileConfig = configs[filePath];
-  if (!fileConfig) return;
+const app = express();
+const port = config.port || 10000;
 
-  for (const [name, config] of Object.entries(fileConfig)) {
-    if (config.match.test(line)) {
-      const key = `${filePath}:${name}`;
-      const lastTime = lastNotifyTime.get(key) || 0;
-      const now = Date.now();
-      const notifyLogger = new Signale({ interactive: true, scope: name });
-      notifyLogger.await(`已匹配`);
-      if (now - lastTime >= (config.debounceInterval || DEBOUNCE_INTERVAL)) {
-        lastNotifyTime.set(key, now);
+app.use(cors());
 
-        try {
-          notifyLogger.await(`开始执行通知`);
-          const context = { name, Signale };
-          const formattedMessage = await config.format(line, context);
-          // logger.log(formattedMessage);
-          await notify(formattedMessage, context);
-          notifyLogger.success(`通知完成`);
-        } catch (error) {
-          notifyLogger.error(`执行通知失败: ${error.message}`);
-        }
-      } else {
-        notifyLogger.log(`跳过通知: 在防抖时间内`);
-      }
-    }
-  }
-}
+// 使用 history 中间件
+app.use(history());
 
-async function watchFiles() {
-  const { configs } = await loadConfig();
-  for (let filePath of Object.keys(configs)) {
-    try {
-      filePath = path.resolve(filePath);
-      const tail = new Tail(filePath);
+let staticDir = config.root || 'dist'
 
-      tail.on("line", (line) => {
-        handleLine(filePath, line).catch((error) => {
-          logger.error(`处理行内容失败: ${error.message}`);
-        });
-      });
+console.log('===> 网站入口目录为: ' + staticDir)
+// 静态文件服务
+app.use('/', express.static(path.join(cwd, staticDir)));
 
-      tail.on("error", (error) => {
-        throw error;
-      });
+// 代理配置
+app.use(
+  "/prod-api",
+  createProxyMiddleware({
+    target: config.proxy,
+    changeOrigin: true,
+    pathRewrite: {
+      "^/prod-api": "", // 去掉 /prod-api 前缀
+    },
+  })
+);
 
-      logger.log(`开始监控文件: ${filePath}`);
-    } catch (error) {
-      logger.error(`监控文件失败: ${filePath}`, error);
-    }
-  }
-}
-
-watchFiles();
+app.listen(port, () => {
+  logger.log(`服务器已启动，监听端口: ${port}`);
+});

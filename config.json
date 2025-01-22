@@ -1,0 +1,5 @@
+{
+    "proxy": "http://wxapp.51yunmai.com:8095/prod-api",
+    "root": "dist",
+    "port": 1025
+}
